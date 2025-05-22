@@ -1,50 +1,75 @@
-const mysql = require('mysql2');
-const dotenv = require('dotenv');
-
-dotenv.config();
-
-const db = mysql.createConnection({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME
-});
-
-db.connect((err) => {
-  if (err) {
-    console.error('Database connection failed:', err);
-  } else {
-    console.log('Connected to database');
-  }
-});
-
-module.exports = db;
-// const mysql = require("mysql2/promise"); // Use the promise-based API
-// const dotenv = require("dotenv");
+// const mysql = require('mysql2');
+// const dotenv = require('dotenv');
 
 // dotenv.config();
 
-// // Create a connection pool (recommended for better performance)
-// const pool = mysql.createPool({
+// const db = mysql.createConnection({
 //   host: process.env.DB_HOST,
 //   user: process.env.DB_USER,
 //   password: process.env.DB_PASSWORD,
-//   database: process.env.DB_NAME,
-//   waitForConnections: true,
-//   connectionLimit: 10, // Adjust based on your needs
-//   queueLimit: 0,
+//   database: process.env.DB_NAME
 // });
 
-// // Test the connection
-// pool
-//   .getConnection()
-//   .then((connection) => {
-//     console.log("Connected to database");
-//     connection.release(); // Release the connection back to the pool
-//   })
-//   .catch((err) => {
-//     console.error("Database connection failed:", err);
-//   });
+// db.connect((err) => {
+//   if (err) {
+//     console.error('Database connection failed:', err);
+//   } else {
+//     console.log('Connected to database');
+//   }
+// });
 
-// // Export the pool for use in other files
-// module.exports = pool;
+// module.exports = db;
+const mysql = require('mysql2');
+const dotenv = require('dotenv');
+const util = require('util');
+
+dotenv.config();
+
+// Create connection with retry logic
+const createDbConnection = () => {
+  console.log('Attempting to connect to database...');
+  
+  const db = mysql.createConnection({
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    port: process.env.DB_PORT || 3306,
+    connectTimeout: 60000 // Increase timeout to 60 seconds
+  });
+
+  // Promisify db.query
+  db.query = util.promisify(db.query).bind(db);
+  
+  db.connect((err) => {
+    if (err) {
+      console.error('Database connection failed:', err);
+      // Don't retry on authentication errors
+      if (err.code === 'ER_ACCESS_DENIED_ERROR') {
+        console.error('Database authentication failed. Check credentials.');
+      } else {
+        console.log('Will retry connection in 5 seconds...');
+        setTimeout(createDbConnection, 5000);
+      }
+    } else {
+      console.log('Connected to database successfully');
+    }
+  });
+
+  // Handle disconnects
+  db.on('error', (err) => {
+    console.error('Database error:', err);
+    if (err.code === 'PROTOCOL_CONNECTION_LOST') {
+      console.log('Database connection lost. Reconnecting...');
+      createDbConnection();
+    } else {
+      throw err;
+    }
+  });
+
+  return db;
+};
+
+const db = createDbConnection();
+
+module.exports = db;
